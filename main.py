@@ -1,207 +1,115 @@
+"""Telegram bots implementation
+
+Two bots are created:
+- Trainer bot (name "раб") – generates a program/code based on the user's request using the Anthropic model via OpenRouter.
+- Simple chat bot (name "шегол") – replies to messages using the same model for casual conversation.
+
+Both bots share the same runtime and load credentials from a .env file that is ignored by git.
 """
-Telegram бот с двумя AI агентами на базе Google Gemini API
-"""
+
 import os
 import logging
-from dotenv import load_dotenv
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-import google.generativeai as genai
-from database import Database
-from config import AGENTS, MAX_HISTORY_MESSAGES
+import asyncio
+from pathlib import Path
 
-# Загрузка переменных окружения
+from dotenv import load_dotenv
+import requests
+from telegram import Update, Bot
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+
+# Load environment variables (ignored by git)
 load_dotenv()
 
-# Настройка логирования
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+# Tokens for the two bots
+TOKEN_RAB = os.getenv("TELEGRAM_TOKEN_RAB")
+TOKEN_SHAGOL = os.getenv("TELEGRAM_TOKEN_SHAGOL")
+
+# Anthropic/OpenRouter configuration
+ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL")
+ANTHROPIC_AUTH_TOKEN = os.getenv("ANTHROPIC_AUTH_TOKEN")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "openai/gpt-oss-120b")
+
+if not all([TOKEN_RAB, TOKEN_SHAGOL, ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN]):
+    raise RuntimeError("Missing required environment variables")
+
+# Simple logger
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Инициализация
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
-    raise ValueError("Не найдены TELEGRAM_BOT_TOKEN или GEMINI_API_KEY в .env файле")
-
-# Настройка Gemini API
-genai.configure(api_key=GEMINI_API_KEY)
-db = Database()
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
-    user_id = update.effective_user.id
-
-    welcome_message = """
-👋 Привет! Я AI бот с двумя агентами:
-
-🔧 *Разработчик* - помогает писать код на любом языке программирования
-💡 *Советник* - дает советы и рекомендации по любым вопросам
-
-Выберите агента:
-/developer - переключиться на разработчика
-/advisor - переключиться на советника
-
-Другие команды:
-/clear - очистить историю текущего разговора
-/help - показать эту справку
-"""
-
-    await update.message.reply_text(welcome_message, parse_mode='Markdown')
+def anthropic_chat(prompt: str) -> str:
+    """Send a prompt to the Anthropic model via OpenRouter and return the response text."""
+    headers = {
+        "Authorization": f"Bearer {ANTHROPIC_AUTH_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": ANTHROPIC_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 1024,
+    }
+    response = requests.post(ANTHROPIC_BASE_URL, json=payload, headers=headers, timeout=30)
+    response.raise_for_status()
+    data = response.json()
+    # OpenRouter returns a list of choices; we take the first message content
+    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /help"""
-    await start(update, context)
-
-
-async def developer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Переключиться на агента-разработчика"""
-    user_id = update.effective_user.id
-    db.set_current_agent(user_id, "developer")
-
+# ----- Trainer bot ("раб") -----
+async def rab_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "🔧 Вы переключились на *Разработчика*\n\n"
-        "Я помогу вам написать код на любом языке программирования. "
-        "Просто опишите, что вам нужно!",
-        parse_mode='Markdown'
+        "Привет! Я бот‑тренер \"раб\". Опиши задачу, и я составлю для тебя программу."
     )
 
-
-async def advisor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Переключиться на агента-советника"""
-    user_id = update.effective_user.id
-    db.set_current_agent(user_id, "advisor")
-
-    await update.message.reply_text(
-        "💡 Вы переключились на *Советника*\n\n"
-        "Я помогу вам с советами и рекомендациями. "
-        "Расскажите, что вас беспокоит или над чем вы думаете!",
-        parse_mode='Markdown'
+async def rab_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_prompt = update.message.text
+    # Build a request asking the model to generate a full program
+    prompt = (
+        f"Ты бот‑тренер. Пользователь просит написать программу по следующему запросу:\n\n"
+        f"{user_prompt}\n\n"
+        "Сгенерируй полностью готовый исходный код на любом языке, который подходит для задачи, "
+        "и включи комментарии на русском, поясняя ключевые части."
     )
-
-
-async def clear_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Очистить историю текущего разговора"""
-    user_id = update.effective_user.id
-    current_agent = db.get_current_agent(user_id)
-
-    if not current_agent:
-        await update.message.reply_text(
-            "Сначала выберите агента: /developer или /advisor"
-        )
-        return
-
-    db.clear_history(user_id, current_agent)
-    agent_name = AGENTS[current_agent]["name"]
-
-    await update.message.reply_text(
-        f"✅ История разговора с агентом *{agent_name}* очищена",
-        parse_mode='Markdown'
-    )
-
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик текстовых сообщений"""
-    user_id = update.effective_user.id
-    user_message = update.message.text
-
-    # Проверяем, выбран ли агент
-    current_agent = db.get_current_agent(user_id)
-    if not current_agent:
-        await update.message.reply_text(
-            "Пожалуйста, сначала выберите агента:\n"
-            "/developer - для помощи с кодом\n"
-            "/advisor - для советов и рекомендаций"
-        )
-        return
-
-    # Показываем индикатор печати
-    await update.message.chat.send_action("typing")
-
     try:
-        # Сохраняем сообщение пользователя
-        db.add_message(user_id, current_agent, "user", user_message)
-
-        # Получаем историю разговора
-        history = db.get_history(user_id, current_agent, MAX_HISTORY_MESSAGES)
-
-        # Получаем конфигурацию агента
-        agent_config = AGENTS[current_agent]
-
-        # Создаем модель Gemini
-        model = genai.GenerativeModel(
-            model_name='gemini-1.5-flash',
-            system_instruction=agent_config["system_prompt"]
-        )
-
-        # Формируем историю для Gemini
-        chat_history = []
-        for msg in history[:-1]:  # Все кроме последнего (текущего) сообщения
-            chat_history.append({
-                "role": msg["role"],
-                "parts": [msg["content"]]
-            })
-
-        # Создаем чат с историей
-        chat = model.start_chat(history=chat_history)
-
-        # Отправляем текущее сообщение
-        response = chat.send_message(user_message)
-
-        # Извлекаем ответ
-        assistant_message = response.text
-
-        # Сохраняем ответ ассистента
-        db.add_message(user_id, current_agent, "model", assistant_message)
-
-        # Отправляем ответ пользователю
-        # Разбиваем длинные сообщения на части (Telegram лимит 4096 символов)
-        max_length = 4096
-        if len(assistant_message) <= max_length:
-            await update.message.reply_text(assistant_message)
-        else:
-            # Разбиваем на части
-            for i in range(0, len(assistant_message), max_length):
-                chunk = assistant_message[i:i + max_length]
-                await update.message.reply_text(chunk)
-
+        response = anthropic_chat(prompt)
+        await update.message.reply_text(response)
     except Exception as e:
-        logger.error(f"Ошибка при обработке сообщения: {e}")
-        await update.message.reply_text(
-            "❌ Произошла ошибка при обработке вашего запроса. "
-            "Пожалуйста, попробуйте еще раз."
-        )
+        logger.exception("Error calling Anthropic API")
+        await update.message.reply_text("Произошла ошибка при генерации кода.")
+
+# ----- Simple chat bot ("шегол") -----
+async def shagol_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "Привет! Я бот‑чат \"шегол\". Пиши, будем болтать."
+    )
+
+async def shagol_handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_prompt = update.message.text
+    prompt = f"Веди дружелюбный разговор на русском, отвечай кратко. Пользователь написал: {user_prompt}"
+    try:
+        response = anthropic_chat(prompt)
+        await update.message.reply_text(response)
+    except Exception as e:
+        logger.exception("Error calling Anthropic API")
+        await update.message.reply_text("Ошибка при получении ответа.")
 
 
-def main():
-    """Запуск бота"""
-    # Создаем приложение
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
+async def main() -> None:
+    # Build two separate applications, each with its own token
+    app_rab = ApplicationBuilder().token(TOKEN_RAB).build()
+    app_shagol = ApplicationBuilder().token(TOKEN_SHAGOL).build()
 
-    # Регистрируем обработчики команд
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("developer", developer))
-    application.add_handler(CommandHandler("advisor", advisor))
-    application.add_handler(CommandHandler("clear", clear_history))
+    # Register handlers for trainer bot
+    app_rab.add_handler(CommandHandler("start", rab_start))
+    app_rab.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, rab_handle_message))
 
-    # Регистрируем обработчик текстовых сообщений
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # Register handlers for chat bot
+    app_shagol.add_handler(CommandHandler("start", shagol_start))
+    app_shagol.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, shagol_handle_message))
 
-    # Запускаем бота
-    logger.info("Бот запущен...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Run both bots concurrently
+    await asyncio.gather(app_rab.run_polling(), app_shagol.run_polling())
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        logger.info("Бот остановлен")
-    finally:
-        db.close()
+    asyncio.run(main())
