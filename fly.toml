@@ -1,20 +1,28 @@
-# fly.toml app configuration file generated for telegram-ai-bot
+# fly.toml app configuration file generated for telebot-e858ma on 2026-05-10T01:27:00Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = "telebot"
-primary_region = "ams"
+app = 'telebot-e858ma'
+primary_region = 'ams'
 
 [build]
 
 [env]
-  PORT = "8080"
+  PORT = '8080'
 
 [processes]
-  app = "python main.py"
+  app = 'python main.py'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
 
 [[vm]]
-  cpu_kind = "shared"
+  cpu_kind = 'shared'
   cpus = 1
   memory_mb = 256
