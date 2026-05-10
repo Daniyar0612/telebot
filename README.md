@@ -46,43 +46,70 @@ ANTHROPIC_API_KEY=ваш_ключ_от_Anthropic
 python main.py
 ```
 
-## Деплой на Railway (бот работает 24/7)
+## Деплой на Fly.io (бот работает 24/7)
 
-Railway - бесплатный хостинг для вашего бота.
+Fly.io - бесплатный хостинг для вашего бота.
 
-### Шаг 1: Подготовка
+### Шаг 1: Установка Fly CLI
 
-1. Зарегистрируйтесь на [railway.app](https://railway.app/)
-2. Загрузите код на GitHub (если еще не сделали)
+**Windows:**
+```powershell
+powershell -Command "iwr https://fly.io/install.ps1 -useb | iex"
+```
 
-### Шаг 2: Создание проекта
+**Mac/Linux:**
+```bash
+curl -L https://fly.io/install.sh | sh
+```
 
-1. Войдите в [Railway Dashboard](https://railway.app/dashboard)
-2. Нажмите **"New Project"**
-3. Выберите **"Deploy from GitHub repo"**
-4. Выберите репозиторий `telegram-ai-bot`
+### Шаг 2: Авторизация
 
-### Шаг 3: Настройка переменных окружения
+```bash
+fly auth login
+```
 
-1. В Railway проекте откройте **"Variables"**
-2. Добавьте переменные:
-   - `TELEGRAM_BOT_TOKEN` = ваш токен от BotFather
-   - `ANTHROPIC_API_KEY` = ваш ключ от Anthropic
+### Шаг 3: Создание приложения
 
-### Шаг 4: Деплой
+```bash
+cd telegram-ai-bot
+fly launch --no-deploy
+```
 
-Railway автоматически:
-- Установит зависимости из `requirements.txt`
-- Запустит бота командой из `Procfile`
-- Перезапустит бота при падении
+Fly CLI спросит:
+- **App name**: оставьте предложенное или введите свое
+- **Region**: выберите ближайший регион (например, Amsterdam)
+- **PostgreSQL**: выберите **No** (используем SQLite)
+- **Redis**: выберите **No**
+
+### Шаг 4: Настройка переменных окружения
+
+```bash
+fly secrets set TELEGRAM_BOT_TOKEN="ваш_токен_от_BotFather"
+fly secrets set ANTHROPIC_API_KEY="ваш_ключ_от_Anthropic"
+```
+
+### Шаг 5: Деплой
+
+```bash
+fly deploy
+```
 
 **Готово!** Ваш бот теперь работает 24/7 ✅
 
+### Полезные команды
+
+```bash
+fly logs              # Смотреть логи бота
+fly status            # Проверить статус
+fly ssh console       # Подключиться к контейнеру
+fly apps restart      # Перезапустить бота
+```
+
 ### Мониторинг
 
-В Railway Dashboard вы можете:
-- Смотреть логи бота
-- Перезапускать бот
+В [Fly.io Dashboard](https://fly.io/dashboard) вы можете:
+- Смотреть метрики и логи
+- Управлять приложением
 - Отслеживать использование ресурсов
 
 ## Использование бота
@@ -117,9 +144,9 @@ telegram-ai-bot/
 ├── config.py         # Конфигурация агентов
 ├── database.py       # Работа с SQLite
 ├── requirements.txt  # Зависимости Python
-├── runtime.txt       # Версия Python для Railway
-├── Procfile          # Команда запуска для Railway
-├── railway.json      # Конфигурация Railway
+├── Dockerfile        # Docker образ для Fly.io
+├── fly.toml          # Конфигурация Fly.io
+├── .dockerignore     # Игнорируемые файлы для Docker
 ├── .env.example      # Шаблон для переменных окружения
 └── .gitignore        # Игнорируемые файлы
 ```
@@ -130,14 +157,15 @@ telegram-ai-bot/
 - **python-telegram-bot** - библиотека для Telegram Bot API
 - **Anthropic Claude API** - AI модель для агентов
 - **SQLite** - база данных для истории
-- **Railway** - хостинг для 24/7 работы
+- **Fly.io** - хостинг для 24/7 работы
+- **Docker** - контейнеризация приложения
 
 ## Безопасность
 
 ⚠️ **Важно:**
 - Никогда не коммитьте `.env` файл в Git
 - `.env` уже добавлен в `.gitignore`
-- На Railway используйте переменные окружения, а не `.env` файл
+- На Fly.io используйте `fly secrets` для переменных окружения
 - Регулярно ротируйте API ключи
 - Установите лимиты расходов в Anthropic Console
 
