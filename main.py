@@ -1,12 +1,12 @@
 """
-Telegram бот с двумя AI агентами на базе Claude API
+Telegram бот с двумя AI агентами на базе Google Gemini API
 """
 import os
 import logging
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from anthropic import Anthropic
+import google.generativeai as genai
 from database import Database
 from config import AGENTS, MAX_HISTORY_MESSAGES
 
@@ -22,12 +22,13 @@ logger = logging.getLogger(__name__)
 
 # Инициализация
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-if not TELEGRAM_TOKEN or not ANTHROPIC_API_KEY:
-    raise ValueError("Не найдены TELEGRAM_BOT_TOKEN или ANTHROPIC_API_KEY в .env файле")
+if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
+    raise ValueError("Не найдены TELEGRAM_BOT_TOKEN или GEMINI_API_KEY в .env файле")
 
-anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+# Настройка Gemini API
+genai.configure(api_key=GEMINI_API_KEY)
 db = Database()
 
 
@@ -129,30 +130,34 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Получаем историю разговора
         history = db.get_history(user_id, current_agent, MAX_HISTORY_MESSAGES)
 
-        # Формируем сообщения для Claude API
-        messages = []
-        for msg in history:
-            messages.append({
-                "role": msg["role"],
-                "content": msg["content"]
-            })
-
         # Получаем конфигурацию агента
         agent_config = AGENTS[current_agent]
 
-        # Отправляем запрос к Claude API
-        response = anthropic_client.messages.create(
-            model=agent_config["model"],
-            max_tokens=agent_config["max_tokens"],
-            system=agent_config["system_prompt"],
-            messages=messages
+        # Создаем модель Gemini
+        model = genai.GenerativeModel(
+            model_name='gemini-1.5-flash',
+            system_instruction=agent_config["system_prompt"]
         )
 
+        # Формируем историю для Gemini
+        chat_history = []
+        for msg in history[:-1]:  # Все кроме последнего (текущего) сообщения
+            chat_history.append({
+                "role": msg["role"],
+                "parts": [msg["content"]]
+            })
+
+        # Создаем чат с историей
+        chat = model.start_chat(history=chat_history)
+
+        # Отправляем текущее сообщение
+        response = chat.send_message(user_message)
+
         # Извлекаем ответ
-        assistant_message = response.content[0].text
+        assistant_message = response.text
 
         # Сохраняем ответ ассистента
-        db.add_message(user_id, current_agent, "assistant", assistant_message)
+        db.add_message(user_id, current_agent, "model", assistant_message)
 
         # Отправляем ответ пользователю
         # Разбиваем длинные сообщения на части (Telegram лимит 4096 символов)
