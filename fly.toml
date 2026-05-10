@@ -3,7 +3,7 @@
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = "telebot"
+app = "telebot-e858ma"
 primary_region = "ams"
 
 [build]
